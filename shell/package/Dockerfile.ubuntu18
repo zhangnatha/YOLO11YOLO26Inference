@@ -1,0 +1,18 @@
+FROM ubuntu:18.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        cmake \
+        g++ \
+        libgl1-mesa-dev \
+        libglfw3-dev \
+        libjpeg-turbo8 \
+        libpng16-16 \
+        patchelf \
+        libtiff5 \
+        libwebp6 \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
