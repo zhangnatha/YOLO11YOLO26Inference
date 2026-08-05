@@ -250,7 +250,7 @@ cmake --build build --parallel
     --conf 0.60 --iou 0.45 --cpu
   ```
 
-## 📦 Ubuntu 18.04 离线打包
+## 📦 Ubuntu 18/20/22/24 通用离线包
 
 - **本机编译（Ubuntu 18.04 直接运行）**：
 
@@ -258,13 +258,16 @@ cmake --build build --parallel
   ./shell/package/package_ubuntu18.sh --native
   ```
   
-- **Docker 容器编译（非 18.04 系统推荐，确保 GLIBC 兼容性）**：
+- 打包脚本为纯本机流程，请在 Ubuntu 18.04 x86_64 实机或虚拟机中执行；
+  在更新系统上编译产生的 GLIBC 引用无法向下兼容 Ubuntu 18.04，因此脚本会拒绝
+  在 Ubuntu 20/22/24 上生成通用包。脚本会递归收集非系统动态库，检查不存在
+  `not found` 项，并拒绝高于 GLIBC 2.27 的产物。
 
-  ```bash
-  ./shell/package/package_ubuntu18.sh --docker
-  ```
-  
-  打包成功后在 `dist/` 目录下生成 `YOLO11YOLO26Inference-ubuntu18-x86_64.tar.gz`，目标机解压即可直接运行 `./YOLO_seg`。  
+  成功后在 `dist/` 目录生成
+  `YOLO11YOLO26Inference-ubuntu18-x86_64.tar.gz`。该包以 Ubuntu 18.04
+  为最低 ABI 基线，可在 Ubuntu 18.04、20.04、22.04、24.04 x86_64
+  上直接解压运行 `./YOLO_seg`；目标机仍需图形驱动/X11（桌面版 Ubuntu
+  默认具备）。
 
 ## 💻 Windows 10/11 源码构建与离线包
 

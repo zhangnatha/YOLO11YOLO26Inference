@@ -3,6 +3,9 @@ cmake_minimum_required(VERSION 3.10)
 if(POLICY CMP0091)
     cmake_policy(SET CMP0091 NEW)
 endif()
+if(POLICY CMP0072)
+    cmake_policy(SET CMP0072 NEW)
+endif()
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 project(Inference_UI VERSION 1.1.0 LANGUAGES CXX)
@@ -22,24 +25,12 @@ set(THIRDPARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty")
 
 # OpenCV: Linux releases use the repository bundle; Windows uses vcpkg or an
 # explicitly supplied OpenCV_DIR.
-if(UNIX AND YOLO_USE_BUNDLED_LINUX_DEPS AND
+if(UNIX AND YOLO_USE_BUNDLED_LINUX_DEPS AND NOT OpenCV_DIR AND
    EXISTS "${THIRDPARTY_DIR}/opencv/lib/cmake/opencv4/OpenCVConfig.cmake")
     set(OpenCV_DIR "${THIRDPARTY_DIR}/opencv/lib/cmake/opencv4" CACHE PATH "" FORCE)
 endif()
 find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc imgcodecs)
 message(STATUS "OpenCV ${OpenCV_VERSION}: ${OpenCV_DIR}")
-
-if(UNIX AND YOLO_USE_BUNDLED_LINUX_DEPS)
-    # The checked-in OpenCV was built on Ubuntu 18 and records libtiff.so.5.
-    # Link it explicitly so modern build hosts cannot silently substitute the
-    # incompatible libtiff.so.6 ABI.
-    find_library(YOLO_TIFF5_LIBRARY NAMES libtiff.so.5)
-    if(NOT YOLO_TIFF5_LIBRARY)
-        message(FATAL_ERROR
-            "Bundled OpenCV requires libtiff.so.5. Build with the Ubuntu 18 "
-            "packaging container or install/provide the Ubuntu 18 TIFF runtime.")
-    endif()
-endif()
 
 # ONNX Runtime 1.17.3. ONNXRUNTIME_DIR may point to an unpacked official SDK.
 if(NOT ONNXRUNTIME_DIR)
@@ -77,7 +68,7 @@ else()
     pkg_check_modules(GLFW REQUIRED IMPORTED_TARGET glfw3)
     set(GLFW_LINK_TARGET PkgConfig::GLFW)
 
-    if(YOLO_USE_BUNDLED_LINUX_DEPS AND
+    if(YOLO_USE_BUNDLED_LINUX_DEPS AND NOT DEFINED yaml-cpp_DIR AND
        EXISTS "${THIRDPARTY_DIR}/yaml-cpp/lib/libyaml-cpp.so")
         add_library(YOLO_yaml_cpp SHARED IMPORTED)
         set_target_properties(YOLO_yaml_cpp PROPERTIES
@@ -119,10 +110,6 @@ target_link_libraries(YOLO_seg PRIVATE
     OpenGL::GL
     ${YAML_CPP_LINK_TARGET}
     Threads::Threads)
-if(YOLO_TIFF5_LIBRARY)
-    target_link_libraries(YOLO_seg PRIVATE "${YOLO_TIFF5_LIBRARY}")
-endif()
-
 if(UNIX AND NOT APPLE)
     target_link_libraries(YOLO_seg PRIVATE dl)
     # DT_RPATH is intentionally used instead of DT_RUNPATH: the portable
