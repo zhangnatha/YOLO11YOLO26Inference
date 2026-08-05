@@ -102,8 +102,15 @@ if [[ ! -x "${EXECUTABLE}" ]]; then
     exit 3
 fi
 
-cp -a "${PROJECT_ROOT}/model" "${PACKAGE_DIR}/model"
-cp -a "${PROJECT_ROOT}/images" "${PACKAGE_DIR}/images"
+for OPTIONAL_RESOURCE_DIR in model images; do
+    if [[ -d "${PROJECT_ROOT}/${OPTIONAL_RESOURCE_DIR}" ]]; then
+        cp -a "${PROJECT_ROOT}/${OPTIONAL_RESOURCE_DIR}" \
+              "${PACKAGE_DIR}/${OPTIONAL_RESOURCE_DIR}"
+    else
+        mkdir -p "${PACKAGE_DIR}/${OPTIONAL_RESOURCE_DIR}"
+        echo "Optional directory not found; packaging an empty ${OPTIONAL_RESOURCE_DIR}/ directory."
+    fi
+done
 cp "${PROJECT_ROOT}/README.md" "${PACKAGE_DIR}/README.md"
 
 # Recursively collect non-glibc shared objects. Keeping the build inside Ubuntu
