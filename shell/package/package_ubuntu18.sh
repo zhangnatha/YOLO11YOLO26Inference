@@ -45,6 +45,12 @@ if [[ ${IS_UBUNTU_18} -ne 1 ]]; then
     exit 5
 fi
 
+if [[ -n "${CONDA_PREFIX:-}" ]]; then
+    echo "An active Conda environment would contaminate the portable build: ${CONDA_PREFIX}" >&2
+    echo "Run 'conda deactivate' until CONDA_PREFIX is empty, then package again." >&2
+    exit 8
+fi
+
 REQUIRED_COMMANDS=(cmake ldd awk strings tar patchelf)
 if [[ ${SKIP_BUILD} -eq 0 ]]; then
     REQUIRED_COMMANDS+=(c++)

@@ -32,6 +32,25 @@ endif()
 find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc imgcodecs)
 message(STATUS "OpenCV ${OpenCV_VERSION}: ${OpenCV_DIR}")
 
+if(UNIX AND YOLO_USE_BUNDLED_LINUX_DEPS)
+    # Catch dependencies built inside Conda before they fail at link time with
+    # a GLIBCXX version that Ubuntu 18's system compiler cannot provide.
+    set(YOLO_OPENCV_IMGCODECS
+        "${THIRDPARTY_DIR}/opencv/lib/libopencv_imgcodecs.so")
+    if(EXISTS "${YOLO_OPENCV_IMGCODECS}")
+        execute_process(
+            COMMAND ldd "${YOLO_OPENCV_IMGCODECS}"
+            OUTPUT_VARIABLE YOLO_OPENCV_LDD
+            ERROR_QUIET)
+        if(YOLO_OPENCV_LDD MATCHES "[Aa]naconda|[Mm]iniconda|/conda/")
+            message(FATAL_ERROR
+                "Bundled OpenCV depends on Anaconda/Conda libraries. Deactivate "
+                "Conda and rebuild it with ./shell/build_opencv.sh before "
+                "configuring this project.\n${YOLO_OPENCV_LDD}")
+        endif()
+    endif()
+endif()
+
 # ONNX Runtime 1.17.3. ONNXRUNTIME_DIR may point to an unpacked official SDK.
 if(NOT ONNXRUNTIME_DIR)
     if(UNIX AND YOLO_USE_CUDA_ORT AND

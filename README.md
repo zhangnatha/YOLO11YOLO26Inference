@@ -209,10 +209,14 @@ cmake --build build --parallel
 ### 1. Ubuntu 18.04（使用仓库内预置 / 脚本安装的依赖）
 
 ```bash
+conda deactivate  # 如已启用 Conda，请先退出（可能需要执行多次）
 sudo apt-get update
 sudo apt-get install -y build-essential cmake pkg-config libgl1-mesa-dev libglfw3-dev libtiff5 patchelf
 
-# 若 3rdparty 尚未就绪，先执行上一节安装脚本
+# 若曾在 Conda 环境中构建 OpenCV，退出 Conda 后必须重新构建
+./shell/build_opencv.sh
+
+# 其余 3rdparty 依赖按需执行上一节安装脚本
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DYOLO_USE_BUNDLED_LINUX_DEPS=ON -DYOLO_USE_CUDA_ORT=OFF
 cmake --build build --parallel
 ```
