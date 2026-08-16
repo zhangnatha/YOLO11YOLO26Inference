@@ -35,6 +35,7 @@ struct Annotation {
     std::string label;
     float score = -1.0f;
     std::vector<cv::Point> points;
+    std::vector<std::vector<cv::Point>> extraContours;
 };
 
 std::string jsonEscape(const std::string& value) {
@@ -108,7 +109,8 @@ std::map<std::string, analysis_fs::path> collectJsonFiles(
     }
     for (const auto& entry : analysis_fs::directory_iterator(directory)) {
         if (!analysis_fs::is_regular_file(entry.path()) ||
-            lowerExtension(entry.path()) != ".json") {
+            lowerExtension(entry.path()) != ".json" ||
+            (predictionSide && entry.path().filename() == "predictions.json")) {
             continue;
         }
         result[normalizedStem(entry.path(), predictionSide)] = entry.path();
@@ -145,9 +147,41 @@ std::vector<Annotation> loadAnnotations(const analysis_fs::path& jsonPath,
         *declaredSize = cv::Size(width, height);
     }
     const YAML::Node shapes = root["shapes"];
-    if (!shapes || !shapes.IsSequence()) return {};
-
     std::vector<Annotation> annotations;
+    if ((!shapes || !shapes.IsSequence()) && root["detections"] &&
+        root["detections"].IsSequence()) {
+        for (const auto& detection : root["detections"]) {
+            Annotation annotation;
+            annotation.label = detection["class_name"]
+                ? detection["class_name"].as<std::string>() : "?";
+            if (detection["score"] && !detection["score"].IsNull())
+                annotation.score = detection["score"].as<float>();
+            const YAML::Node contours = detection["contours_xy"];
+            if (contours && contours.IsSequence()) {
+                for (const auto& contour : contours) {
+                    std::vector<cv::Point> points;
+                    if (!contour.IsSequence()) continue;
+                    for (const auto& pointNode : contour) {
+                        if (!pointNode.IsSequence() || pointNode.size() < 2) continue;
+                        int x = cvRound(pointNode[0].as<double>());
+                        int y = cvRound(pointNode[1].as<double>());
+                        if (imageSize.width > 0 && imageSize.height > 0) {
+                            x = std::max(0, std::min(imageSize.width - 1, x));
+                            y = std::max(0, std::min(imageSize.height - 1, y));
+                        }
+                        points.emplace_back(x, y);
+                    }
+                    if (points.size() >= 3) {
+                        if (annotation.points.empty()) annotation.points = std::move(points);
+                        else annotation.extraContours.push_back(std::move(points));
+                    }
+                }
+            }
+            if (annotation.points.size() >= 3) annotations.push_back(std::move(annotation));
+        }
+        return annotations;
+    }
+    if (!shapes || !shapes.IsSequence()) return annotations;
     for (const auto& shape : shapes) {
         const YAML::Node pointNodes = shape["points"];
         if (!pointNodes || !pointNodes.IsSequence()) continue;
@@ -188,6 +222,8 @@ double polygonIou(const Annotation& first, const Annotation& second,
     if (first.points.size() < 3 || second.points.size() < 3) return 0.0;
     cv::Rect bounds = cv::boundingRect(first.points) |
                       cv::boundingRect(second.points);
+    for (const auto& contour : first.extraContours) bounds |= cv::boundingRect(contour);
+    for (const auto& contour : second.extraContours) bounds |= cv::boundingRect(contour);
     bounds &= cv::Rect(0, 0, imageSize.width, imageSize.height);
     if (bounds.empty()) return 0.0;
 
@@ -201,8 +237,10 @@ double polygonIou(const Annotation& first, const Annotation& second,
     };
     cv::Mat firstMask(bounds.size(), CV_8UC1, cv::Scalar(0));
     cv::Mat secondMask(bounds.size(), CV_8UC1, cv::Scalar(0));
-    const std::vector<std::vector<cv::Point>> firstPolygon{shifted(first.points)};
-    const std::vector<std::vector<cv::Point>> secondPolygon{shifted(second.points)};
+    std::vector<std::vector<cv::Point>> firstPolygon{shifted(first.points)};
+    std::vector<std::vector<cv::Point>> secondPolygon{shifted(second.points)};
+    for (const auto& contour : first.extraContours) firstPolygon.push_back(shifted(contour));
+    for (const auto& contour : second.extraContours) secondPolygon.push_back(shifted(contour));
     cv::fillPoly(firstMask, firstPolygon, cv::Scalar(255));
     cv::fillPoly(secondMask, secondPolygon, cv::Scalar(255));
     cv::Mat intersection;
@@ -217,14 +255,17 @@ double polygonIou(const Annotation& first, const Annotation& second,
 
 void drawContour(cv::Mat& image, const Annotation& annotation,
                  const cv::Scalar& color, int thickness) {
-    const std::vector<std::vector<cv::Point>> contours{annotation.points};
+    std::vector<std::vector<cv::Point>> contours{annotation.points};
+    contours.insert(contours.end(), annotation.extraContours.begin(),
+                    annotation.extraContours.end());
     cv::drawContours(image, contours, -1, color, thickness, cv::LINE_AA);
 }
 
 void drawTag(cv::Mat& image, const Annotation& annotation,
              const std::string& text, const cv::Scalar& color) {
     if (annotation.points.empty()) return;
-    const cv::Rect bounds = cv::boundingRect(annotation.points);
+    cv::Rect bounds = cv::boundingRect(annotation.points);
+    for (const auto& contour : annotation.extraContours) bounds |= cv::boundingRect(contour);
     int baseline = 0;
     const cv::Size textSize = cv::getTextSize(
         text, cv::FONT_HERSHEY_SIMPLEX, 0.42, 1, &baseline);
