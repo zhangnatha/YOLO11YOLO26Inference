@@ -130,10 +130,17 @@ if (-not (Test-Path $VcpkgExe)) {
     Assert-NativeSuccess "vcpkg bootstrap"
 }
 
+function To-CMakePath([string]$Path) {
+    if (-not $Path) { return $Path }
+    return ($Path -replace '\\', '/')
+}
+
 if (-not (Test-Path (Join-Path $OrtRoot "include/onnxruntime_cxx_api.h"))) {
-    if ($Offline) { throw "Offline mode: cached ONNX Runtime 1.17.3 SDK is missing." }
     $OrtZip = Join-Path $ThirdPartyRoot "onnxruntime-win-x64-1.17.3.zip"
-    Invoke-WebRequest -UseBasicParsing -Uri $OrtUrl -OutFile $OrtZip
+    if (-not (Test-Path $OrtZip)) {
+        if ($Offline) { throw "Offline mode: cached ONNX Runtime 1.17.3 SDK is missing: $OrtZip" }
+        Invoke-WebRequest -UseBasicParsing -Uri $OrtUrl -OutFile $OrtZip
+    }
     $ActualHash = (Get-FileHash -Algorithm SHA256 $OrtZip).Hash
     if ($ActualHash -ne $OrtSha256) {
         throw "ONNX Runtime archive checksum mismatch: $ActualHash"
@@ -165,16 +172,16 @@ try {
 
 if (Test-Path $BuildDir) { Remove-Item -Recurse -Force $BuildDir }
 $CmakeArguments = @(
-    "-S", $ProjectRoot,
-    "-B", $BuildDir,
+    "-S", (To-CMakePath $ProjectRoot),
+    "-B", (To-CMakePath $BuildDir),
     "-G", "MinGW Makefiles",
     "-DCMAKE_BUILD_TYPE=Release",
-    "-DCMAKE_C_COMPILER=$Gcc",
-    "-DCMAKE_CXX_COMPILER=$Gxx",
-    "-DCMAKE_MAKE_PROGRAM=$Make",
-    "-DCMAKE_TOOLCHAIN_FILE=$VcpkgRoot/scripts/buildsystems/vcpkg.cmake",
+    "-DCMAKE_C_COMPILER=$(To-CMakePath $Gcc)",
+    "-DCMAKE_CXX_COMPILER=$(To-CMakePath $Gxx)",
+    "-DCMAKE_MAKE_PROGRAM=$(To-CMakePath $Make)",
+    "-DCMAKE_TOOLCHAIN_FILE=$(To-CMakePath (Join-Path $VcpkgRoot 'scripts/buildsystems/vcpkg.cmake'))",
     "-DVCPKG_TARGET_TRIPLET=x64-mingw-static",
-    "-DONNXRUNTIME_DIR=$OrtRoot"
+    "-DONNXRUNTIME_DIR=$(To-CMakePath $OrtRoot)"
 )
 & cmake @CmakeArguments
 Assert-NativeSuccess "CMake configure"

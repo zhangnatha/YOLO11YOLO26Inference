@@ -62,6 +62,9 @@ if(NOT ONNXRUNTIME_DIR)
         set(ONNXRUNTIME_DIR "$ENV{ONNXRUNTIME_DIR}")
     endif()
 endif()
+if(ONNXRUNTIME_DIR)
+    file(TO_CMAKE_PATH "${ONNXRUNTIME_DIR}" ONNXRUNTIME_DIR)
+endif()
 
 find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h
           HINTS "${ONNXRUNTIME_DIR}/include")
