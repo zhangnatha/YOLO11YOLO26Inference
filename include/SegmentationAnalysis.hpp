@@ -30,6 +30,7 @@ struct ClassMetrics {
 struct ReviewItem {
     std::string originalPath;
     std::string visualizationPath;
+    long long elapsedMs = 0;
 };
 
 struct Report {
@@ -56,6 +57,8 @@ Report analyzeDirectories(
     const std::string& outputDirectory,
     float iouThreshold,
     bool showOverlayText,
-    const std::function<void(const std::string&)>& logCallback = {});
+    const std::function<void(const std::string&)>& logCallback = {},
+    const std::function<void(int current, int total, long long elapsedMs)>& progressCallback = {},
+    const std::function<bool()>& cancelCallback = {});
 
 }  // namespace segmentation_analysis

@@ -106,9 +106,14 @@ std::thread loadModelThread;
 std::thread detectionThread;
 std::thread analysisThread;
 std::atomic<bool> isAnalyzing(false);
+std::atomic<bool> shouldStopAnalysis(false);
 std::mutex analysisMutex;
 segmentation_analysis::Report analysisReport;
 std::atomic<unsigned long long> analysisVersion(0);
+std::atomic<int> analysisCurrentProgress(0);
+std::atomic<int> analysisTotalProgress(0);
+std::atomic<long long> analysisElapsedMs(0);
+std::atomic<bool> analysisHasProgress(false);
 
 void copyPathArgument(char* destination, size_t capacity,
                       const std::string& value);
@@ -1073,6 +1078,12 @@ void analysisWorker() {
         analysisReport = segmentation_analysis::Report();
         ++analysisVersion;
     }
+    analysisCurrentProgress = 0;
+    analysisTotalProgress = 0;
+    analysisElapsedMs = 0;
+    analysisHasProgress = false;
+    shouldStopAnalysis = false;
+
     const std::string predictionDirectory(analysisPredictionDirectory);
     const std::string groundTruthDirectory(analysisGroundTruthDirectory);
     const std::string outputDirectory(analysisOutputDirectory);
@@ -1083,18 +1094,35 @@ void analysisWorker() {
         auto report = segmentation_analysis::analyzeDirectories(
             predictionDirectory, groundTruthDirectory, outputDirectory,
             matchThreshold, includeOverlayText,
-            [](const std::string& message) { addLog(message); });
+            [](const std::string& message) { addLog(message); },
+            [](int current, int total, long long elapsedMs) {
+                analysisCurrentProgress = current;
+                analysisTotalProgress = total;
+                analysisElapsedMs = elapsedMs;
+                analysisHasProgress = true;
+            },
+            [&]() {
+                return shouldStopAnalysis.load() || shouldExit.load();
+            });
         {
             std::lock_guard<std::mutex> lock(analysisMutex);
             analysisReport = std::move(report);
             ++analysisVersion;
         }
         const auto snapshot = getAnalysisReportSnapshot();
-        addLog("Analysis finished. Images: " +
-               std::to_string(snapshot.images) + ", missed: " +
-               std::to_string(snapshot.total.falseNegative) +
-               ", false positives: " +
-               std::to_string(snapshot.total.falsePositive));
+        if (shouldStopAnalysis.load()) {
+            addLog("Analysis stopped by user. Processed images: " +
+                   std::to_string(snapshot.images) + ", missed: " +
+                   std::to_string(snapshot.total.falseNegative) +
+                   ", false positives: " +
+                   std::to_string(snapshot.total.falsePositive));
+        } else {
+            addLog("Analysis finished. Images: " +
+                   std::to_string(snapshot.images) + ", missed: " +
+                   std::to_string(snapshot.total.falseNegative) +
+                   ", false positives: " +
+                   std::to_string(snapshot.total.falsePositive));
+        }
         addLog("Analysis CSV: " + snapshot.csvPath);
         addLog("Analysis JSON: " + snapshot.jsonPath);
     } catch (const std::exception& error) {
@@ -1106,8 +1134,16 @@ void analysisWorker() {
 
 void startAnalysis() {
     if (isAnalyzing.exchange(true)) return;
+    shouldStopAnalysis = false;
     if (analysisThread.joinable()) analysisThread.join();
     analysisThread = std::thread(analysisWorker);
+}
+
+void stopAnalysis() {
+    if (isAnalyzing.load()) {
+        shouldStopAnalysis = true;
+        addLog("Stopping analysis...");
+    }
 }
 
 bool loadAnalysisTextures(size_t index,
@@ -1583,6 +1619,11 @@ int main(int argc, char** argv) {
             ImGui::TextColored(ImVec4(0.1f, 0.4f, 0.9f, 1.0f),
                                "Inference running...");
         }
+        if (isAnalyzing) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.1f, 0.4f, 0.9f, 1.0f),
+                               "Analysis running...");
+        }
         ImGui::Separator();
 
         ImGui::BeginChild("Settings", ImVec2(0, 215), true);
@@ -1819,11 +1860,11 @@ int main(int argc, char** argv) {
                 const bool analysisWasRunning = isAnalyzing.load();
                 if (analysisWasRunning) ImGui::BeginDisabled();
                 auto drawAnalysisPath = [&](const char* label,
-                                            const char* inputId,
-                                            char* buffer,
-                                            size_t bufferSize,
-                                            const char* browseId,
-                                            const char* browserTitle) {
+                                             const char* inputId,
+                                             char* buffer,
+                                             size_t bufferSize,
+                                             const char* browseId,
+                                             const char* browserTitle) {
                     ImGui::AlignTextToFramePadding();
                     ImGui::TextUnformatted(label);
                     ImGui::SameLine(175);
@@ -1867,20 +1908,41 @@ int main(int argc, char** argv) {
                     analysisGroundTruthDirectory[0] != '\0' &&
                     analysisOutputDirectory[0] != '\0';
                 if (!analysisPathsReady) ImGui::BeginDisabled();
-                if (ImGui::Button("Run Analysis", ImVec2(135, 0))) {
+                if (ImGui::Button("Run Analysis", ImVec2(120, 0))) {
                     startAnalysis();
                 }
                 if (!analysisPathsReady) ImGui::EndDisabled();
                 if (analysisWasRunning) ImGui::EndDisabled();
 
+                ImGui::SameLine();
+                const bool canStopAnalysis = isAnalyzing.load();
+                if (!canStopAnalysis) ImGui::BeginDisabled();
+                if (ImGui::Button("Stop Analysis", ImVec2(120, 0))) {
+                    stopAnalysis();
+                }
+                if (!canStopAnalysis) ImGui::EndDisabled();
+
                 const auto currentReport = getAnalysisReportSnapshot();
                 ImGui::Separator();
-                ImGui::Text(
-                    "Processed images: %d    Skipped: %d    "
-                    "Report: %s",
-                    currentReport.images, currentReport.skippedImages,
-                    currentReport.csvPath.empty()
-                        ? "not generated" : currentReport.csvPath.c_str());
+                if (analysisHasProgress.load() && analysisTotalProgress.load() > 0) {
+                    ImGui::Text(
+                        "Progress: %d/%d - %lldms    Processed images: %d    Skipped: %d    "
+                        "Report: %s",
+                        analysisCurrentProgress.load(),
+                        analysisTotalProgress.load(),
+                        analysisElapsedMs.load(),
+                        currentReport.images, currentReport.skippedImages,
+                        currentReport.csvPath.empty()
+                            ? (isAnalyzing ? "generating..." : "not generated")
+                            : currentReport.csvPath.c_str());
+                } else {
+                    ImGui::Text(
+                        "Progress: 0/0    Processed images: %d    Skipped: %d    "
+                        "Report: %s",
+                        currentReport.images, currentReport.skippedImages,
+                        currentReport.csvPath.empty()
+                            ? "not generated" : currentReport.csvPath.c_str());
+                }
 
                 const float tableHeight = std::min(
                     190.0f, std::max(100.0f,
@@ -2082,6 +2144,7 @@ int main(int argc, char** argv) {
 
     saveConfig();
     shouldExit = true;
+    shouldStopAnalysis = true;
     if (detectionThread.joinable()) detectionThread.join();
     if (loadModelThread.joinable()) loadModelThread.join();
     if (analysisThread.joinable()) analysisThread.join();

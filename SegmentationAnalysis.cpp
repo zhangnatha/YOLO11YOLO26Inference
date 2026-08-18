@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -477,7 +478,9 @@ Report analyzeDirectories(
     const std::string& outputDirectory,
     float iouThreshold,
     bool showOverlayText,
-    const std::function<void(const std::string&)>& logCallback) {
+    const std::function<void(const std::string&)>& logCallback,
+    const std::function<void(int current, int total, long long elapsedMs)>& progressCallback,
+    const std::function<bool()>& cancelCallback) {
     const analysis_fs::path predictionRoot(predictionDirectory);
     const analysis_fs::path groundTruthRoot(groundTruthDirectory);
     const analysis_fs::path outputRoot(outputDirectory);
@@ -500,10 +503,21 @@ Report analyzeDirectories(
     for (const auto& item : predictionJson) stems.insert(item.first);
     for (const auto& item : groundTruthJson) stems.insert(item.first);
 
+    const int totalStems = static_cast<int>(stems.size());
+    if (progressCallback) {
+        progressCallback(0, totalStems, 0);
+    }
+
     Report report;
     std::map<std::string, ClassMetrics> metrics;
+    int currentIndex = 0;
     for (const auto& stem : stems) {
-        if (logCallback) logCallback("Analyzing: " + stem);
+        if (cancelCallback && cancelCallback()) {
+            if (logCallback) logCallback("Analysis stopped by user.");
+            break;
+        }
+        ++currentIndex;
+        const auto startTime = std::chrono::steady_clock::now();
         const analysis_fs::path originalPath =
             findImage(groundTruthRoot, stem, false);
         const analysis_fs::path predictionImagePath =
@@ -534,8 +548,17 @@ Report analyzeDirectories(
             }
         } catch (const std::exception& error) {
             ++report.skippedImages;
+            const auto endTime = std::chrono::steady_clock::now();
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                endTime - startTime).count();
             if (logCallback) {
-                logCallback("Skipped " + stem + ": " + error.what());
+                logCallback("Skipped [" + std::to_string(currentIndex) + "/" +
+                            std::to_string(totalStems) + "] - " +
+                            std::to_string(elapsedMs) + "ms (" + stem + "): " +
+                            error.what());
+            }
+            if (progressCallback) {
+                progressCallback(currentIndex, totalStems, elapsedMs);
             }
             continue;
         }
@@ -544,7 +567,17 @@ Report analyzeDirectories(
         }
         if (original.empty()) {
             ++report.skippedImages;
-            if (logCallback) logCallback("Skipped " + stem + ": image missing");
+            const auto endTime = std::chrono::steady_clock::now();
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                endTime - startTime).count();
+            if (logCallback) {
+                logCallback("Skipped [" + std::to_string(currentIndex) + "/" +
+                            std::to_string(totalStems) + "] - " +
+                            std::to_string(elapsedMs) + "ms (" + stem + "): image missing");
+            }
+            if (progressCallback) {
+                progressCallback(currentIndex, totalStems, elapsedMs);
+            }
             continue;
         }
 
@@ -643,9 +676,18 @@ Report analyzeDirectories(
             outputRoot / (stem + "_analysis.png");
         if (!cv::imwrite(visualizationPath.string(), visualization)) {
             ++report.skippedImages;
+            const auto endTime = std::chrono::steady_clock::now();
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                endTime - startTime).count();
             if (logCallback) {
-                logCallback("Cannot save visualization: " +
+                logCallback("Cannot save visualization [" +
+                            std::to_string(currentIndex) + "/" +
+                            std::to_string(totalStems) + "] - " +
+                            std::to_string(elapsedMs) + "ms: " +
                             visualizationPath.string());
+            }
+            if (progressCallback) {
+                progressCallback(currentIndex, totalStems, elapsedMs);
             }
             continue;
         }
@@ -654,9 +696,21 @@ Report analyzeDirectories(
             reviewOriginal = outputRoot / (stem + "_source.png");
             cv::imwrite(reviewOriginal.string(), original);
         }
+        const auto endTime = std::chrono::steady_clock::now();
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            endTime - startTime).count();
         report.reviewItems.push_back(
-            {reviewOriginal.string(), visualizationPath.string()});
+            {reviewOriginal.string(), visualizationPath.string(), elapsedMs});
         ++report.images;
+
+        if (logCallback) {
+            logCallback("Analyzing [" + std::to_string(currentIndex) + "/" +
+                        std::to_string(totalStems) + "] - " +
+                        std::to_string(elapsedMs) + "ms: " + stem);
+        }
+        if (progressCallback) {
+            progressCallback(currentIndex, totalStems, elapsedMs);
+        }
     }
 
     for (const auto& item : metrics) report.classes.push_back(item.second);
