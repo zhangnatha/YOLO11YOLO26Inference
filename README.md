@@ -277,30 +277,156 @@ cmake --build build --parallel
   纯净源码环境中不存在时，打包脚本会在包内创建对应空目录。模型可在部署后
   自行放入 `model/`，图片也可在界面中选择其他目录。
 
-## 💻 Windows 10/11 源码构建与离线包
+## 💻 Windows 10/11 源码构建、运行与离线打包
 
-### 环境准备
+### 1. 环境准备
 
-- 64 位 Windows 10/11，需要安装 CMake、Git、PowerShell 5.1+。  
-- **GCC 工具链**：必须精确使用 `mingw64_x86_64-15.2.0`（Target: `x86_64-w64-mingw32`）。  
-- 依赖由 `vcpkg.json` + 打包脚本自动处理（glfw3 / opencv4 / yaml-cpp），ONNX Runtime 1.17.3 首次构建时自动下载。
+本项目在 Windows 平台采用 **MinGW-w64 GCC 15.2.0 + vcpkg + CMake** 进行构建与依赖管理，具备完全静态链接 C++ 运行时与第三方库的能力。
 
-### 编译与打包脚本
+- **操作系统**：64 位 Windows 10 / Windows 11 (x64)。
+- **PowerShell**：Windows 自带的 PowerShell 5.1 或 PowerShell 7+。
+- **Git for Windows**：已安装并加入系统 `PATH`（用于拉取 vcpkg 与源码）。
+- **CMake**：3.20 或更高版本（需加入系统 `PATH`）。
+- **MinGW-w64 GCC 工具链**：必须严格匹配 **GCC 15.2.0**（Target: `x86_64-w64-mingw32`）。
+  - **下载地址**：[x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev1.7z](https://github.com/niXman/mingw-builds-binaries/releases/download/15.2.0-rt_v13-rev1/x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev1.7z)（来自 niXman mingw-builds-binaries 官方 Release）。
+  - 解压至本地路径（例如 `D:\mingw64`，其子目录应包含 `bin\gcc.exe`、`bin\g++.exe`、`bin\mingw32-make.exe`、`bin\dlltool.exe`、`bin\objdump.exe`）。
 
-配置环境变量并运行打包脚本（首次运行会自动下载并缓存 vcpkg 和 ONNX Runtime）：  
+> **说明**：第三方依赖（`glfw3`、`opencv4`、`yaml-cpp`）由 `vcpkg.json` 清单管理，`onnxruntime-win-x64-1.17.3` 官方 SDK 会在首次构建时自动下载并生成 MinGW 导入库（`libonnxruntime.dll.a`），无需手动编译。
 
-```PowerShell
-$env:MINGW_ROOT = "D:\mingw64_x86_64-15.2.0"
+---
 
-# 仅构建源码
+### 2. 权限与环境变量配置
+
+以普通用户或管理员身份打开 **PowerShell**：
+
+```powershell
+# 1. 允许当前 PowerShell 进程执行脚本
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+# 2. 指定 MinGW GCC 15.2.0 的根目录
+$env:MINGW_ROOT = "D:\mingw64"   # 请替换为你的实际解压路径
+
+# 3. 验证 MinGW GCC 版本（必须输出 15.2.0）
+& "$env:MINGW_ROOT\bin\gcc.exe" --version
+```
+
+---
+
+### 3. 一键编译源码（本地运行）
+
+在项目根目录下执行打包脚本（附加 `-BuildOnly` 参数）：
+
+```powershell
 .\shell\package\package_windows.ps1 -BuildOnly
+```
 
-# 构建并打包离线包（输出至 dist\YOLO11YOLO26Inference-windows-x64.zip）
+**脚本自动执行流程**：
+1. 校验 GCC 版本为 15.2.0 且架构为 `x86_64-w64-mingw32`。
+2. 自动拉取/复用 `3rdparty/windows/vcpkg` 并安装 `x64-mingw-static` 架构的 `opencv4`、`glfw3`、`yaml-cpp`。
+3. 自动下载 `onnxruntime-win-x64-1.17.3.zip`，校验 SHA256，并通过 `dlltool` 生成 MinGW 专用的 `libonnxruntime.dll.a` 导入库。
+4. 调用 CMake 与 MinGW 生成构建工程并完成编译。
+5. 自动扫描 PE 依赖并将 `onnxruntime.dll` 及必要运行时 DLL 复制到产物目录。
+
+编译成功后，产物生成在 `build\windows-mingw64\` 目录下。
+
+---
+
+### 4. 在 Windows 上运行源码编译产物
+
+#### (1) GUI 图形交互界面（推荐）
+
+直接运行生成的 `YOLO_seg.exe` 即可启动 GUI：
+
+```powershell
+# 方式 A：从项目根目录启动
+.\build\windows-mingw64\YOLO_seg.exe
+
+# 方式 B：进入构建目录启动
+cd build\windows-mingw64
+.\YOLO_seg.exe
+```
+
+启动后：
+1. 点击 **Load Model** 加载 ONNX 模型（默认自动寻找 `model/` 目录下的模型）。
+2. 在左侧可使用 **Draw / Redraw ROI** 绘制感兴趣多边形区域。
+3. 点击 **Run Folder Inference** 对选择的图片目录进行批量推理。
+4. 左右方向键（`←` / `→`）翻页查看对比图，按 `S` 键一键提取原图与结果图至 `original\`。
+
+#### (2) CLI 命令行批量推理模式
+
+```powershell
+.\build\windows-mingw64\YOLO_seg.exe `
+  --batch-images images `
+  --model model\suidong_20260727YOLO26m.dmmodel\segmentation.onnx `
+  --output build\windows-mingw64\results `
+  --conf 0.60 --iou 0.45 --cpu
+```
+
+#### (3) CLI 命令行 IoU 精度分析模式
+
+对比预测生成的 `_r.json` 与真实标注数据（Ground Truth）：
+
+```powershell
+.\build\windows-mingw64\YOLO_seg.exe `
+  --analyze-predictions build\windows-mingw64\results `
+  --ground-truth images `
+  --analysis-output build\windows-mingw64\analysis `
+  --match-iou 0.50 `
+  --hide-overlay-text
+```
+
+---
+
+### 5. 一键打包 Windows 独立离线分发包
+
+如需将程序打包给其他 Windows 10/11 机器（无需安装 GCC、CMake 或 Visual Studio），直接运行：
+
+```powershell
 .\shell\package\package_windows.ps1
+```
 
-# 纯离线编译（禁止重新下载依赖）
+**打包产物**：
+- 目录：`dist\YOLO11YOLO26Inference-windows-x64\`
+- 压缩包：`dist\YOLO11YOLO26Inference-windows-x64.zip`
+
+**离线包内容结构**：
+```text
+YOLO11YOLO26Inference-windows-x64/
+├── YOLO_seg.exe               # 主程序
+├── onnxruntime.dll            # ONNX Runtime 运行库
+├── (其他依赖 DLL)             # 脚本自动提取补齐的系统/运行时 DLL
+├── model/                     # 模型与类别文件（若存在）
+├── images/                    # 示例测试图像（若存在）
+├── results/                   # 预创建的结果保存目录
+├── original/                  # 预创建的人工复核保存目录
+└── README.md                  # 说明文档
+```
+
+**分发与使用**：
+将生成的 `YOLO11YOLO26Inference-windows-x64.zip` 解压到目标 Windows 10/11 电脑上，**直接双击 `YOLO_seg.exe` 即可运行**，绿色便携，无需配置任何开发环境。
+
+---
+
+### 6. 纯离线重新构建（禁止网络下载）
+
+在已经完成一次完整构建、依赖均已缓存在 `3rdparty/windows/` 的情况下，若需要在无外网环境下重新编译打包：
+
+```powershell
 .\shell\package\package_windows.ps1 -Offline
 ```
+
+---
+
+### 7. 常见问题排查（Windows FAQ）
+
+1. **PowerShell 提示“在此系统上禁止运行脚本”**：
+   - 执行：`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`，然后重新运行脚本。
+2. **提示 `Unsupported MinGW GCC version ... exactly 15.2.0 is required`**：
+   - 本项目针对 MinGW-w64 GCC 15.2.0 的 ABI 和 `vcpkg` 静态库做了严格适配。请确保下载安装的是 GCC 15.2.0，并通过 `$env:MINGW_ROOT` 指向该目录。
+3. **vcpkg 或 ONNX Runtime 下载超时/网络失败**：
+   - 可以配置 Git / 终端代理，或手动将 `onnxruntime-win-x64-1.17.3.zip` 放入 `3rdparty/windows/` 目录下。
+4. **启动时提示找不到某些 DLL**：
+   - 使用打包脚本打包时，`Copy-RuntimeDependencies` 会自动递归分析并复制所有非系统 DLL；若在某些精简版 Windows 系统上运行，请确保已安装基础 VC++ 运行库（`vcruntime140.dll` / `msvcp140.dll`）。
 
 ## 🖥️ GUI 使用说明
 
